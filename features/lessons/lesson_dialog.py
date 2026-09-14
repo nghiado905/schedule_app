@@ -3,7 +3,7 @@ from typing import Callable
 
 import flet as ft
 
-from constants import COLORS
+from constants import COLORS, THEME
 from models.lesson import Lesson
 from repositories.lesson_repository import LessonRepository
 
@@ -38,7 +38,7 @@ class LessonDialogFeature:
         finish = ft.TextField(label="Ket thuc", value=end.strftime("%H:%M"), expand=True)
         room = ft.TextField(label="Phong hoc", value=lesson.room if lesson else "")
         note = ft.TextField(label="Ghi chu", value=lesson.note if lesson else "", multiline=True, min_lines=2)
-        error = ft.Text(color="#D32F2F", size=12)
+        error = ft.Text(color=THEME["danger"], size=12)
         swatches = self._color_swatches(chosen)
 
         def save(_):
@@ -78,7 +78,7 @@ class LessonDialogFeature:
 
         actions = []
         if lesson:
-            actions.append(ft.TextButton("Xoa", icon=ft.Icons.DELETE_OUTLINE, on_click=delete, style=ft.ButtonStyle(color="#D32F2F")))
+            actions.append(ft.TextButton("Xoa", icon=ft.Icons.DELETE_OUTLINE, on_click=delete, style=ft.ButtonStyle(color=THEME["danger"])))
         actions += [ft.TextButton("Huy", on_click=lambda _: self.page.pop_dialog()), ft.Button("Luu", on_click=save)]
 
         dialog = ft.AlertDialog(
@@ -112,7 +112,7 @@ class LessonDialogFeature:
         def choose(e):
             chosen[0] = e.control.data
             for item in swatches:
-                item.border = ft.Border.all(3, "#202124") if item.data == chosen[0] else None
+                item.border = ft.Border.all(3, THEME["text"]) if item.data == chosen[0] else None
             self.page.update()
 
         for color in COLORS:
@@ -123,7 +123,7 @@ class LessonDialogFeature:
                     bgcolor=color,
                     border_radius=17,
                     data=color,
-                    border=ft.Border.all(3, "#202124") if color == chosen[0] else None,
+                    border=ft.Border.all(3, THEME["text"]) if color == chosen[0] else None,
                     on_click=choose,
                 )
             )

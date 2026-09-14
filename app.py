@@ -12,7 +12,7 @@ from components.lesson_card import build_agenda_item
 from components.mode_button import build_mode_button
 from components.sidebar import build_sidebar
 from components.toolbar import build_toolbar
-from constants import DAYS, DAY_WIDTH, END_HOUR, HOUR_HEIGHT, START_HOUR
+from constants import DARK_THEME, DAYS, DAY_WIDTH, END_HOUR, HOUR_HEIGHT, LIGHT_THEME, START_HOUR
 from features.calendar import render_day_view, render_month_view, render_week_view, render_year_view
 from features.lessons import LessonDialogFeature
 from features.settings import SettingsFeature
@@ -32,7 +32,8 @@ class TimetableApp:
     def __init__(self, page: ft.Page):
         self.page = page
         self.repo = LessonRepository(str(get_database_path()))
-        self.settings = SettingsFeature(page)
+        self.theme = LIGHT_THEME
+        self.settings = SettingsFeature(page, self.set_dark_mode)
         self.lesson_dialog = LessonDialogFeature(page, self.repo, self.after_lesson_saved)
         self.selected = date.today()
         self.monday = week_start(self.selected)
@@ -42,19 +43,19 @@ class TimetableApp:
 
         page.title = "Thoi khoa bieu"
         page.theme_mode = ft.ThemeMode.LIGHT
-        page.bgcolor = "#F7F7FA"
+        page.bgcolor = self.theme["page"]
         page.padding = 0
 
-        self.period_title = ft.Text(size=16, weight=ft.FontWeight.BOLD, color="#25272C")
-        self.side_month = ft.Text(size=25, weight=ft.FontWeight.BOLD, color="#F7F7F8")
+        self.period_title = ft.Text(size=16, weight=ft.FontWeight.BOLD, color=self.theme["text"])
+        self.side_month = ft.Text(size=25, weight=ft.FontWeight.BOLD, color=self.theme["sidebar_text"])
         self.mini_calendar = ft.GridView(runs_count=7, max_extent=28, spacing=2, run_spacing=2, height=178)
         self.agenda = ft.ListView(spacing=5, expand=True)
         self.mode_row = ft.Row(spacing=6)
         self.board = ft.Row(spacing=0, vertical_alignment=ft.CrossAxisAlignment.START)
         self.board_scroll = ft.ListView([ft.Row([self.board], scroll=ft.ScrollMode.AUTO)], expand=True, padding=0)
 
-        sidebar = build_sidebar(self.side_month, self.mini_calendar, self.agenda)
-        toolbar = build_toolbar(
+        self.sidebar = build_sidebar(self.side_month, self.mini_calendar, self.agenda, self.theme)
+        self.toolbar = build_toolbar(
             period_title=self.period_title,
             mode_row=self.mode_row,
             on_previous=lambda _: self.move_period(-1),
@@ -62,10 +63,34 @@ class TimetableApp:
             on_next=lambda _: self.move_period(1),
             on_search=self.search,
             on_add=lambda _: self.open_editor(),
-            settings_button=self.settings.button(),
+            settings_button=self.settings.button(self.theme),
+            theme=self.theme,
         )
-        calendar_panel = ft.Column([toolbar, self.board_scroll], spacing=0, expand=True)
-        page.add(ft.SafeArea(ft.Row([sidebar, calendar_panel], spacing=0, expand=True), expand=True))
+        self.calendar_panel = ft.Column([self.toolbar, self.board_scroll], spacing=0, expand=True)
+        page.add(ft.SafeArea(ft.Row([self.sidebar, self.calendar_panel], spacing=0, expand=True), expand=True))
+        self.refresh()
+
+    def set_dark_mode(self, enabled: bool):
+        self.theme = DARK_THEME if enabled else LIGHT_THEME
+        self.page.theme_mode = ft.ThemeMode.DARK if enabled else ft.ThemeMode.LIGHT
+        self.page.bgcolor = self.theme["page"]
+        self.period_title.color = self.theme["text"]
+        self.side_month.color = self.theme["sidebar_text"]
+        self.sidebar = build_sidebar(self.side_month, self.mini_calendar, self.agenda, self.theme)
+        self.toolbar = build_toolbar(
+            period_title=self.period_title,
+            mode_row=self.mode_row,
+            on_previous=lambda _: self.move_period(-1),
+            on_today=lambda _: self.today(),
+            on_next=lambda _: self.move_period(1),
+            on_search=self.search,
+            on_add=lambda _: self.open_editor(),
+            settings_button=self.settings.button(self.theme),
+            theme=self.theme,
+        )
+        root_row = self.page.controls[0].content
+        root_row.controls[0] = self.sidebar
+        self.calendar_panel.controls[0] = self.toolbar
         self.refresh()
 
     def refresh(self):
@@ -91,7 +116,7 @@ class TimetableApp:
     def render_mode_buttons(self):
         labels = [("day", "Ngay"), ("week", "Tuan"), ("month", "Thang"), ("year", "Nam")]
         self.mode_row.controls = [
-            build_mode_button(label, self.view_mode == mode, lambda _, value=mode: self.set_view_mode(value))
+            build_mode_button(label, self.view_mode == mode, lambda _, value=mode: self.set_view_mode(value), self.theme)
             for mode, label in labels
         ]
 
@@ -111,13 +136,13 @@ class TimetableApp:
         month_lessons = self.repo.list_between(start, end)
         self.agenda.controls.clear()
         if not month_lessons:
-            self.agenda.controls.append(ft.Text("Chua co lich trong thang", color="#AAAEB7", size=12))
+            self.agenda.controls.append(ft.Text("Chua co lich trong thang", color=self.theme["sidebar_muted"], size=12))
         for lesson in month_lessons[:8]:
-            self.agenda.controls.append(build_agenda_item(lesson, lambda _, item=lesson: self.open_editor(item)))
+            self.agenda.controls.append(build_agenda_item(lesson, lambda _, item=lesson: self.open_editor(item), self.theme))
 
         self.mini_calendar.controls.clear()
         for label in DAYS:
-            self.mini_calendar.controls.append(ft.Text(label, size=9, color="#989AA2", text_align=ft.TextAlign.CENTER))
+            self.mini_calendar.controls.append(ft.Text(label, size=9, color=self.theme["sidebar_subtle"], text_align=ft.TextAlign.CENTER))
         first_weekday, days_in_month = calendar.monthrange(self.selected.year, self.selected.month)
         for _ in range(first_weekday):
             self.mini_calendar.controls.append(ft.Container())
@@ -125,7 +150,7 @@ class TimetableApp:
             value = date(self.selected.year, self.selected.month, number)
             active = value == self.selected
             self.mini_calendar.controls.append(
-                build_mini_calendar_day(number, active, lambda _, selected_day=value: self.select_day(selected_day))
+                build_mini_calendar_day(number, active, lambda _, selected_day=value: self.select_day(selected_day), self.theme)
             )
 
     def build_day_board(self, lessons: list[Lesson]):
@@ -144,12 +169,13 @@ class TimetableApp:
         for hour in range(START_HOUR, END_HOUR):
             time_cells.append(
                 ft.Container(
-                    ft.Text(f"{hour:02}:00", size=10, color="#85888F"),
+                    ft.Text(f"{hour:02}:00", size=10, color=self.theme["text_subtle"]),
                     width=52,
                     height=HOUR_HEIGHT,
                     padding=ft.Padding.only(right=7, top=3),
                     alignment=ft.Alignment.TOP_RIGHT,
-                    border=ft.Border(bottom=ft.BorderSide(1, "#E7E8EA")),
+                    bgcolor=self.theme["surface_low"],
+                    border=ft.Border(bottom=ft.BorderSide(1, self.theme["border"])),
                 )
             )
         self.board.controls = [ft.Column(time_cells, spacing=0)]
@@ -166,10 +192,10 @@ class TimetableApp:
                         left=0,
                         width=column_width,
                         height=HOUR_HEIGHT,
-                        bgcolor="#EEF5FF" if is_today else "#FFFFFF",
+                        bgcolor=self.theme["today"] if is_today else self.theme["surface"],
                         border=ft.Border(
-                            bottom=ft.BorderSide(1, "#E7E8EA"),
-                            right=ft.BorderSide(1, "#E7E8EA"),
+                            bottom=ft.BorderSide(1, self.theme["border"]),
+                            right=ft.BorderSide(1, self.theme["border"]),
                         ),
                     )
                 )
@@ -183,8 +209,8 @@ class TimetableApp:
             header = ft.Container(
                 ft.Column(
                     [
-                        ft.Text(day_name, size=10, color="#777A81"),
-                        ft.Text(str(current.day), size=18, weight=ft.FontWeight.BOLD, color="#25272C"),
+                        ft.Text(day_name, size=10, color=self.theme["text_subtle"]),
+                        ft.Text(str(current.day), size=18, weight=ft.FontWeight.BOLD, color=self.theme["text"]),
                     ],
                     spacing=1,
                     horizontal_alignment=ft.CrossAxisAlignment.CENTER,
@@ -192,8 +218,8 @@ class TimetableApp:
                 width=column_width,
                 height=58,
                 padding=7,
-                bgcolor="#EEF5FF" if is_today else "#FFFFFF",
-                border=ft.Border(bottom=ft.BorderSide(1, "#E4E5E7"), right=ft.BorderSide(1, "#E4E5E7")),
+                bgcolor=self.theme["today"] if is_today else self.theme["surface_high"],
+                border=ft.Border(bottom=ft.BorderSide(1, self.theme["border"]), right=ft.BorderSide(1, self.theme["border"])),
                 on_click=lambda _, selected_day=current: self.select_day(selected_day),
             )
             self.board.controls.append(
@@ -221,8 +247,8 @@ class TimetableApp:
             left=3,
             width=column_width - 6,
             height=(end_slot - start_slot) * HOUR_HEIGHT - 4,
-            bgcolor="#DF292922",
-            border=ft.Border(left=ft.BorderSide(3, "#DF2929")),
+            bgcolor=f"{self.theme['danger']}33",
+            border=ft.Border(left=ft.BorderSide(3, self.theme["danger"])),
             border_radius=5,
         )
 
@@ -241,11 +267,11 @@ class TimetableApp:
                         lesson.title,
                         size=10,
                         weight=ft.FontWeight.BOLD,
-                        color="#20242A",
+                        color=self.theme["text"],
                         max_lines=2,
                         overflow=ft.TextOverflow.ELLIPSIS,
                     ),
-                    ft.Text(lesson.room, size=9, color="#555A62", visible=bool(lesson.room)),
+                    ft.Text(lesson.room, size=9, color=self.theme["text_muted"], visible=bool(lesson.room)),
                 ],
                 spacing=1,
             ),
@@ -281,7 +307,12 @@ class TimetableApp:
 
         header = ft.Row(
             [
-                ft.Container(ft.Text(label, size=11, color="#777A81", text_align=ft.TextAlign.CENTER), width=122, padding=8)
+                ft.Container(
+                    ft.Text(label, size=11, color=self.theme["text_subtle"], text_align=ft.TextAlign.CENTER),
+                    width=122,
+                    padding=8,
+                    bgcolor=self.theme["surface_low"],
+                )
                 for label in DAYS
             ],
             spacing=0,
@@ -300,7 +331,7 @@ class TimetableApp:
                     content=ft.Text(
                         lesson.title,
                         size=9,
-                        color=ft.Colors.ON_SURFACE,
+                        color=self.theme["text"],
                         max_lines=1,
                         overflow=ft.TextOverflow.ELLIPSIS,
                     ),
@@ -336,7 +367,7 @@ class TimetableApp:
                 ft.Text(
                     f"+{len(lessons) - 3} lich",
                     size=9,
-                    color=ft.Colors.ON_SURFACE_VARIANT,
+                    color=self.theme["text_muted"],
                 )
             )
 
@@ -348,9 +379,9 @@ class TimetableApp:
                         size=13,
                         weight=ft.FontWeight.BOLD,
                         color=(
-                            "#DF2929"
+                            self.theme["danger"]
                             if active_day
-                            else ft.Colors.ON_SURFACE
+                            else self.theme["text"]
                         ),
                     ),
                     *lesson_items,
@@ -363,19 +394,19 @@ class TimetableApp:
             padding=7,
 
             bgcolor=(
-                ft.Colors.SURFACE
+                self.theme["surface"]
                 if active_month
-                else ft.Colors.SURFACE_CONTAINER_LOW
+                else self.theme["surface_low"]
             ),
 
             border=ft.Border(
                 bottom=ft.BorderSide(
                     1,
-                    ft.Colors.OUTLINE_VARIANT,
+                    self.theme["border"],
                 ),
                 right=ft.BorderSide(
                     1,
-                    ft.Colors.OUTLINE_VARIANT,
+                    self.theme["border"],
                 ),
             ),
 
@@ -429,18 +460,18 @@ class TimetableApp:
                         f"Thang {month}",
                         size=16,
                         weight=ft.FontWeight.BOLD,
-                        color=ft.Colors.ON_SURFACE,
+                        color=self.theme["text"],
                     ),
 
                     ft.Text(
                         f"{len(lessons)} lich",
                         size=12,
-                        color=ft.Colors.ON_SURFACE_VARIANT,
+                        color=self.theme["text_muted"],
                     ),
 
                     ft.Container(
                         height=1,
-                        bgcolor=ft.Colors.OUTLINE_VARIANT,
+                        bgcolor=self.theme["border"],
                     ),
 
                     self.small_month(
@@ -455,13 +486,13 @@ class TimetableApp:
             height=190,
             padding=12,
 
-            bgcolor=ft.Colors.SURFACE_CONTAINER_LOW,
+            bgcolor=self.theme["surface"],
 
             border_radius=8,
 
             border=ft.Border.all(
                 1,
-                ft.Colors.OUTLINE_VARIANT,
+                self.theme["border"],
             ),
 
             on_click=lambda _, selected_month=month: self.select_month(
@@ -507,7 +538,7 @@ class TimetableApp:
                         color=(
                             "#FFFFFF"
                             if has_lesson
-                            else ft.Colors.ON_SURFACE_VARIANT
+                            else self.theme["text_muted"]
                         ),
                         text_align=ft.TextAlign.CENTER,
                     ),
@@ -518,7 +549,7 @@ class TimetableApp:
                     alignment=ft.Alignment.CENTER,
 
                     bgcolor=(
-                        "#3578F6"
+                        self.theme["accent"]
                         if has_lesson
                         else None
                     ),

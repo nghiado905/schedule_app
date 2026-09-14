@@ -1,22 +1,14 @@
 import flet as ft
 
 
-def build_mode_button(label: str, active: bool, on_click):
+def build_mode_button(label: str, active: bool, on_click, theme):
     return ft.Container(
             content=ft.Text(
             label,
-            color=(
-                ft.Colors.ON_PRIMARY
-                if active
-                else ft.Colors.ON_SURFACE_VARIANT
-            ),
+            color="#FFFFFF" if active else theme["text_muted"],
             weight=ft.FontWeight.BOLD if active else None,
         ),
-       bgcolor=(
-            ft.Colors.PRIMARY
-            if active
-            else ft.Colors.SURFACE_CONTAINER
-        ),
+       bgcolor=theme["accent"] if active else theme["surface_high"],
         padding=ft.Padding.symmetric(
             horizontal=12,
             vertical=7,
