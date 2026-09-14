@@ -1,0 +1,23 @@
+[project]
+name = "thoi-khoa-bieu"
+version = "0.1.0"
+description = "Ứng dụng thời khóa biểu Flet cho Android"
+requires-python = ">=3.10"
+dependencies = ["flet"]
+
+[tool.flet]
+org = "com.tutorialdev"
+product = "Thời khóa biểu"
+company = "Tutorial Dev"
+
+[tool.flet.app]
+path = "."
+
+[tool.flet.android]
+package = "com.tutorialdev.thoikhoabieu"
+min_sdk_version = 24
+target_arch = ["arm64-v8a"]
+split_per_abi = true
+
+[tool.flet.android.manifest_application]
+allowBackup = "true"
