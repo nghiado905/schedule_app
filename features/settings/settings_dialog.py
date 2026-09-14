@@ -1,15 +1,17 @@
 import flet as ft
 
+from constants import THEME
+
 
 class SettingsDialog:
-    def __init__(self, page: ft.Page):
+    def __init__(self, page: ft.Page, on_dark_mode_changed):
         self.page = page
+        self.on_dark_mode_changed = on_dark_mode_changed
 
     def open(self):
 
         def toggle_dark_mode(e):
-            self.page.theme_mode = ft.ThemeMode.DARK if e.control.value else ft.ThemeMode.LIGHT
-            self.page.update()
+            self.on_dark_mode_changed(bool(e.control.value))
 
         is_dark_mode = self.page.theme_mode == ft.ThemeMode.DARK
         theme_switch = ft.Switch(label="Dark mode", value=is_dark_mode, on_change=toggle_dark_mode)
@@ -23,7 +25,7 @@ class SettingsDialog:
                     [
                         theme_switch,
                         notification_switch,
-                        ft.Text("Phan nay dang la UI settings, chua luu database.", size=12, color="#777A81"),
+                        ft.Text("Phan nay dang la UI settings, chua luu database.", size=12, color=THEME["text_subtle"]),
                     ],
                     tight=True,
                     spacing=12,
