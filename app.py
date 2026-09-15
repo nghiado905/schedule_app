@@ -12,7 +12,7 @@ from components.lesson_card import build_agenda_item
 from components.mode_button import build_mode_button
 from components.sidebar import build_sidebar
 from components.toolbar import build_toolbar
-from constants import DARK_THEME, DAYS, DAY_WIDTH, END_HOUR, HOUR_HEIGHT, LIGHT_THEME, START_HOUR
+from constants import DARK_THEME, DAYS, DAY_WIDTH, END_HOUR, HOUR_HEIGHT, LESSON_PALETTE, LIGHT_THEME, START_HOUR
 from features.calendar import render_day_view, render_month_view, render_week_view, render_year_view
 from features.lessons import LessonDialogFeature
 from features.settings import SettingsFeature
@@ -40,11 +40,13 @@ class TimetableApp:
         self.query = ""
         self.view_mode = "week"
         self.drag_selection = None
+        self.is_compact = False
 
         page.title = "Thoi khoa bieu"
         page.theme_mode = ft.ThemeMode.LIGHT
         page.bgcolor = self.theme["page"]
         page.padding = 0
+        page.on_resized = lambda _: self.on_resize()
 
         self.period_title = ft.Text(size=16, weight=ft.FontWeight.BOLD, color=self.theme["text"])
         self.side_month = ft.Text(size=25, weight=ft.FontWeight.BOLD, color=self.theme["sidebar_text"])
@@ -54,7 +56,8 @@ class TimetableApp:
         self.board = ft.Row(spacing=0, vertical_alignment=ft.CrossAxisAlignment.START)
         self.board_scroll = ft.ListView([ft.Row([self.board], scroll=ft.ScrollMode.AUTO)], expand=True, padding=0)
 
-        self.sidebar = build_sidebar(self.side_month, self.mini_calendar, self.agenda, self.theme)
+        self.apply_responsive_size()
+        self.sidebar = build_sidebar(self.side_month, self.mini_calendar, self.agenda, self.theme, self.sidebar_width())
         self.toolbar = build_toolbar(
             period_title=self.period_title,
             mode_row=self.mode_row,
@@ -65,9 +68,51 @@ class TimetableApp:
             on_add=lambda _: self.open_editor(),
             settings_button=self.settings.button(self.theme),
             theme=self.theme,
+            compact=self.is_compact,
         )
         self.calendar_panel = ft.Column([self.toolbar, self.board_scroll], spacing=0, expand=True)
-        page.add(ft.SafeArea(ft.Row([self.sidebar, self.calendar_panel], spacing=0, expand=True), expand=True))
+        self.root_row = ft.Row([self.sidebar, self.calendar_panel], spacing=0, expand=True)
+        page.add(ft.SafeArea(self.root_row, expand=True))
+        self.refresh()
+
+    def apply_responsive_size(self):
+        width = self.page.width or 420
+        self.is_compact = width < 760
+        self.mini_calendar.height = 0 if self.is_compact else 178
+        self.agenda.visible = not self.is_compact
+        self.side_month.size = 16 if self.is_compact else 25
+        self.period_title.size = 13 if self.is_compact else 16
+
+    def sidebar_width(self) -> int:
+        return 0 if self.is_compact else 255
+
+    def day_column_width(self, column_count: int) -> int:
+        width = self.page.width or 420
+        if column_count == 1:
+            return max(260, int(width - 72 - self.sidebar_width()))
+        return 92 if self.is_compact else DAY_WIDTH
+
+    def month_cell_width(self) -> int:
+        return 82 if self.is_compact else 122
+
+    def month_cell_height(self) -> int:
+        return 92 if self.is_compact else 118
+
+    def year_card_width(self) -> int:
+        return 150 if self.is_compact else 190
+
+    def year_card_height(self) -> int:
+        return 168 if self.is_compact else 190
+
+    def year_cards_per_row(self) -> int:
+        return 2 if self.is_compact else 4
+
+    def on_resize(self):
+        previous_compact = self.is_compact
+        self.apply_responsive_size()
+        if previous_compact != self.is_compact:
+            self.sidebar = build_sidebar(self.side_month, self.mini_calendar, self.agenda, self.theme, self.sidebar_width())
+            self.root_row.controls[0] = self.sidebar
         self.refresh()
 
     def set_dark_mode(self, enabled: bool):
@@ -76,7 +121,8 @@ class TimetableApp:
         self.page.bgcolor = self.theme["page"]
         self.period_title.color = self.theme["text"]
         self.side_month.color = self.theme["sidebar_text"]
-        self.sidebar = build_sidebar(self.side_month, self.mini_calendar, self.agenda, self.theme)
+        self.apply_responsive_size()
+        self.sidebar = build_sidebar(self.side_month, self.mini_calendar, self.agenda, self.theme, self.sidebar_width())
         self.toolbar = build_toolbar(
             period_title=self.period_title,
             mode_row=self.mode_row,
@@ -87,9 +133,9 @@ class TimetableApp:
             on_add=lambda _: self.open_editor(),
             settings_button=self.settings.button(self.theme),
             theme=self.theme,
+            compact=self.is_compact,
         )
-        root_row = self.page.controls[0].content
-        root_row.controls[0] = self.sidebar
+        self.root_row.controls[0] = self.sidebar
         self.calendar_panel.controls[0] = self.toolbar
         self.refresh()
 
@@ -181,7 +227,7 @@ class TimetableApp:
         self.board.controls = [ft.Column(time_cells, spacing=0)]
 
         today = date.today()
-        column_width = 360 if len(days) == 1 else DAY_WIDTH
+        column_width = self.day_column_width(len(days))
         for current, day_name in days:
             is_today = current == today
             stack_controls = []
@@ -259,19 +305,20 @@ class TimetableApp:
         height = max(36, duration / 60 * HOUR_HEIGHT)
         if top >= total_height:
             return ft.Container()
+        card_bg, title_color, meta_color = self.lesson_colors(lesson.color)
         return ft.Container(
             ft.Column(
                 [
-                    ft.Text(lesson.start_at.strftime("%H:%M"), size=9, color=lesson.color),
+                    ft.Text(lesson.start_at.strftime("%H:%M"), size=9, color=meta_color, weight=ft.FontWeight.BOLD),
                     ft.Text(
                         lesson.title,
                         size=10,
                         weight=ft.FontWeight.BOLD,
-                        color=self.theme["text"],
+                        color=title_color,
                         max_lines=2,
                         overflow=ft.TextOverflow.ELLIPSIS,
                     ),
-                    ft.Text(lesson.room, size=9, color=self.theme["text_muted"], visible=bool(lesson.room)),
+                    ft.Text(lesson.room, size=9, color=title_color, opacity=0.75, visible=bool(lesson.room)),
                 ],
                 spacing=1,
             ),
@@ -279,12 +326,18 @@ class TimetableApp:
             left=3,
             width=column_width - 6,
             height=min(height - 4, total_height - top - 2),
-            bgcolor=f"{lesson.color}2A",
+            bgcolor=card_bg,
             padding=5,
             border_radius=5,
             border=ft.Border(left=ft.BorderSide(3, lesson.color)),
             on_click=lambda _, item=lesson: self.open_editor(item),
         )
+
+    def lesson_colors(self, color: str):
+        palette = LESSON_PALETTE.get(color, LESSON_PALETTE["#20A4E8"])
+        if self.theme is DARK_THEME:
+            return palette["dark_bg"], "#FFFFFF", color
+        return palette["light_bg"], "#1F2937", palette["text"]
 
     def build_month_board(self, lessons: list[Lesson]):
         if self.query:
@@ -309,7 +362,7 @@ class TimetableApp:
             [
                 ft.Container(
                     ft.Text(label, size=11, color=self.theme["text_subtle"], text_align=ft.TextAlign.CENTER),
-                    width=122,
+                    width=self.month_cell_width(),
                     padding=8,
                     bgcolor=self.theme["surface_low"],
                 )
@@ -326,19 +379,20 @@ class TimetableApp:
         lesson_items = []
 
         for lesson in lessons[:3]:
+            card_bg, title_color, _ = self.lesson_colors(lesson.color)
             lesson_items.append(
                 ft.Container(
                     content=ft.Text(
                         lesson.title,
                         size=9,
-                        color=self.theme["text"],
+                        color=title_color,
                         max_lines=1,
                         overflow=ft.TextOverflow.ELLIPSIS,
                     ),
 
-                    width=110 if active_month else None,
+                    width=max(62, self.month_cell_width() - 14) if active_month else None,
 
-                    bgcolor=f"{lesson.color}2A",
+                    bgcolor=card_bg,
 
                     border=ft.Border(
                         left=ft.BorderSide(
@@ -389,8 +443,8 @@ class TimetableApp:
                 spacing=4,
             ),
 
-            width=122,
-            height=118,
+            width=self.month_cell_width(),
+            height=self.month_cell_height(),
             padding=7,
 
             bgcolor=(
@@ -433,12 +487,13 @@ class TimetableApp:
             for month in range(1, 13)
         ]
 
+        per_row = self.year_cards_per_row()
         rows = [
             ft.Row(
-                cards[index:index + 4],
+                cards[index:index + per_row],
                 spacing=12,
             )
-            for index in range(0, 12, 4)
+            for index in range(0, 12, per_row)
         ]
 
         self.board.controls = [
@@ -482,8 +537,8 @@ class TimetableApp:
                 spacing=8,
             ),
 
-            width=190,
-            height=190,
+            width=self.year_card_width(),
+            height=self.year_card_height(),
             padding=12,
 
             bgcolor=self.theme["surface"],

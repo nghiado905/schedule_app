@@ -10,6 +10,7 @@ def build_toolbar(
     on_add,
     settings_button,
     theme,
+    compact: bool = False,
 ):
     return ft.Container(
         ft.Row(
@@ -23,7 +24,7 @@ def build_toolbar(
                 ft.TextField(
                     hint_text="Tim mon hoc",
                     prefix_icon=ft.Icons.SEARCH,
-                    width=170,
+                    width=120 if compact else 170,
                     height=40,
                     color=theme["text"],
                     border_color=theme["border"],
@@ -32,7 +33,7 @@ def build_toolbar(
                     on_change=on_search,
                 ),
                ft.Button(
-                    "Them chi tiet",
+                    "Them" if compact else "Them chi tiet",
                     icon=ft.Icons.ADD,
                     bgcolor=theme["accent"],
                     color="#FFFFFF",

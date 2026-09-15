@@ -1,6 +1,6 @@
 import flet as ft
 
-def build_sidebar(side_month: ft.Text, mini_calendar: ft.GridView, agenda: ft.ListView, theme):
+def build_sidebar(side_month: ft.Text, mini_calendar: ft.GridView, agenda: ft.ListView, theme, width: int = 255):
     return ft.Container(
         ft.Column(
             [
@@ -18,7 +18,7 @@ def build_sidebar(side_month: ft.Text, mini_calendar: ft.GridView, agenda: ft.Li
             ],
             spacing=8,
         ),
-        width=255,
+        width=width,
         bgcolor=theme["sidebar"],
         padding=14,
     )

@@ -1,4 +1,11 @@
 COLORS = ["#20A4E8", "#8A55E8", "#18B978", "#F3A51B", "#EF4963"]
+LESSON_PALETTE = {
+    "#20A4E8": {"light_bg": "#E5F7FF", "dark_bg": "#12384A", "text": "#075985"},
+    "#8A55E8": {"light_bg": "#F0EAFF", "dark_bg": "#30204D", "text": "#5B21B6"},
+    "#18B978": {"light_bg": "#E7F8EF", "dark_bg": "#123D2B", "text": "#047857"},
+    "#F3A51B": {"light_bg": "#FFF4DB", "dark_bg": "#4A3512", "text": "#B45309"},
+    "#EF4963": {"light_bg": "#FFE8EC", "dark_bg": "#4A1822", "text": "#BE123C"},
+}
 DARK_THEME = {
     "page": "#101114",
     "sidebar": "#17181C",
