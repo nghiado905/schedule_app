@@ -15,6 +15,7 @@ from components.toolbar import build_toolbar
 from constants import DARK_THEME, DAYS, DAY_WIDTH, END_HOUR, HOUR_HEIGHT, LESSON_PALETTE, LIGHT_THEME, START_HOUR
 from features.calendar import render_day_view, render_month_view, render_week_view, render_year_view
 from features.lessons import LessonDialogFeature
+from features.screenshot import ScreenshotFeature
 from features.settings import SettingsFeature
 from models.lesson import Lesson
 from repositories.lesson_repository import LessonRepository
@@ -34,6 +35,7 @@ class TimetableApp:
         self.repo = LessonRepository(str(get_database_path()))
         self.theme = LIGHT_THEME
         self.settings = SettingsFeature(page, self.set_dark_mode)
+        self.screenshot = ScreenshotFeature(page, get_database_path().parent / "screenshots")
         self.lesson_dialog = LessonDialogFeature(page, self.repo, self.after_lesson_saved)
         self.selected = date.today()
         self.monday = week_start(self.selected)
@@ -46,6 +48,7 @@ class TimetableApp:
         page.theme_mode = ft.ThemeMode.LIGHT
         page.bgcolor = self.theme["page"]
         page.padding = 0
+        page.enable_screenshots = True
         page.on_resized = lambda _: self.on_resize()
 
         self.period_title = ft.Text(size=16, weight=ft.FontWeight.BOLD, color=self.theme["text"])
@@ -66,6 +69,7 @@ class TimetableApp:
             on_next=lambda _: self.move_period(1),
             on_search=self.search,
             on_add=lambda _: self.open_editor(),
+            screenshot_button=self.screenshot.button(self.theme),
             settings_button=self.settings.button(self.theme),
             theme=self.theme,
             compact=self.is_compact,
@@ -131,6 +135,7 @@ class TimetableApp:
             on_next=lambda _: self.move_period(1),
             on_search=self.search,
             on_add=lambda _: self.open_editor(),
+            screenshot_button=self.screenshot.button(self.theme),
             settings_button=self.settings.button(self.theme),
             theme=self.theme,
             compact=self.is_compact,
