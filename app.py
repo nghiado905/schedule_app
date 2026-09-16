@@ -97,23 +97,35 @@ class TimetableApp:
     def sidebar_width(self) -> int:
         return 0 if self.is_compact else 255
 
+    def content_width(self) -> int:
+        return max(320, int((self.page.width or 420) - self.sidebar_width()))
+
+    def time_column_width(self) -> int:
+        return 44 if self.is_compact else 52
+
     def day_column_width(self, column_count: int) -> int:
-        width = self.page.width or 420
+        width = self.content_width()
         if column_count == 1:
-            return max(260, int(width - 72 - self.sidebar_width()))
-        return 92 if self.is_compact else DAY_WIDTH
+            return max(260, int(width - self.time_column_width() - 12))
+        if self.is_compact:
+            return max(44, int((width - self.time_column_width() - 2) / column_count))
+        return DAY_WIDTH
 
     def month_cell_width(self) -> int:
-        return 82 if self.is_compact else 122
+        if self.is_compact:
+            return max(44, int((self.content_width() - 2) / 7))
+        return 122
 
     def month_cell_height(self) -> int:
-        return 92 if self.is_compact else 118
+        return 72 if self.is_compact else 118
 
     def year_card_width(self) -> int:
-        return 150 if self.is_compact else 190
+        if self.is_compact:
+            return max(148, int((self.content_width() - 28) / 2))
+        return 190
 
     def year_card_height(self) -> int:
-        return 168 if self.is_compact else 190
+        return 154 if self.is_compact else 190
 
     def year_cards_per_row(self) -> int:
         return 2 if self.is_compact else 4
@@ -301,6 +313,7 @@ class TimetableApp:
         hint = ft.Text("Chon o trong de tao lich. Bam vao card de sua hoac xoa.", color=self.theme["text_muted"])
         total_height = (END_HOUR - START_HOUR) * HOUR_HEIGHT
         column_width = self.day_column_width(7)
+        time_width = self.time_column_width()
         fixed_by_day: dict[int, list[FixedLesson]] = {}
         for item in self.fixed_repo.list_all():
             fixed_by_day.setdefault(item.weekday, []).append(item)
@@ -310,7 +323,7 @@ class TimetableApp:
             time_cells.append(
                 ft.Container(
                     ft.Text(f"{hour:02}:00", size=10, color=self.theme["text_subtle"]),
-                    width=52,
+                    width=time_width,
                     height=HOUR_HEIGHT,
                     padding=ft.Padding.only(right=7, top=3),
                     alignment=ft.Alignment.TOP_RIGHT,
@@ -567,12 +580,13 @@ class TimetableApp:
             lessons = [lesson for lesson in lessons if self.query in lesson.title.casefold()]
 
         total_height = (END_HOUR - START_HOUR) * HOUR_HEIGHT
+        time_width = self.time_column_width()
         time_cells = [ft.Container(height=58)]
         for hour in range(START_HOUR, END_HOUR):
             time_cells.append(
                 ft.Container(
                     ft.Text(f"{hour:02}:00", size=10, color=self.theme["text_subtle"]),
-                    width=52,
+                    width=time_width,
                     height=HOUR_HEIGHT,
                     padding=ft.Padding.only(right=7, top=3),
                     alignment=ft.Alignment.TOP_RIGHT,
@@ -662,19 +676,20 @@ class TimetableApp:
         if top >= total_height:
             return ft.Container()
         card_bg, title_color, meta_color = self.lesson_colors(lesson.color)
+        compact_card = column_width < 70
         return ft.Container(
             ft.Column(
                 [
-                    ft.Text(lesson.start_at.strftime("%H:%M"), size=9, color=meta_color, weight=ft.FontWeight.BOLD),
+                    ft.Text(lesson.start_at.strftime("%H:%M"), size=8 if compact_card else 9, color=meta_color, weight=ft.FontWeight.BOLD),
                     ft.Text(
                         lesson.title,
-                        size=10,
+                        size=8 if compact_card else 10,
                         weight=ft.FontWeight.BOLD,
                         color=title_color,
-                        max_lines=2,
+                        max_lines=1 if compact_card else 2,
                         overflow=ft.TextOverflow.ELLIPSIS,
                     ),
-                    ft.Text(lesson.room, size=9, color=title_color, opacity=0.75, visible=bool(lesson.room)),
+                    ft.Text(lesson.room, size=8 if compact_card else 9, color=title_color, opacity=0.75, visible=bool(lesson.room) and not compact_card),
                 ],
                 spacing=1,
             ),
@@ -683,9 +698,9 @@ class TimetableApp:
             width=column_width - 6,
             height=min(height - 4, total_height - top - 2),
             bgcolor=card_bg,
-            padding=5,
+            padding=3 if compact_card else 5,
             border_radius=5,
-            border=ft.Border(left=ft.BorderSide(3, lesson.color)),
+            border=ft.Border(left=ft.BorderSide(2 if compact_card else 3, lesson.color)),
             on_click=lambda _, item=lesson: self.open_lesson_item(item),
         )
 
@@ -749,13 +764,13 @@ class TimetableApp:
                 ft.Container(
                     content=ft.Text(
                         lesson.title,
-                        size=9,
+                        size=8 if self.is_compact else 9,
                         color=title_color,
                         max_lines=1,
                         overflow=ft.TextOverflow.ELLIPSIS,
                     ),
 
-                    width=max(62, self.month_cell_width() - 14) if active_month else None,
+                    width=max(32, self.month_cell_width() - 10) if active_month else None,
 
                     bgcolor=card_bg,
 
@@ -767,8 +782,8 @@ class TimetableApp:
                     ),
 
                     padding=ft.Padding.symmetric(
-                        horizontal=5,
-                        vertical=3,
+                        horizontal=3 if self.is_compact else 5,
+                        vertical=2 if self.is_compact else 3,
                     ),
 
                     border_radius=4,
@@ -810,7 +825,7 @@ class TimetableApp:
 
             width=self.month_cell_width(),
             height=self.month_cell_height(),
-            padding=7,
+            padding=4 if self.is_compact else 7,
 
             bgcolor=(
                 self.theme["surface"]
