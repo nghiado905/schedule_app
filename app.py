@@ -2,7 +2,7 @@
 
 import calendar
 import os
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, time, timedelta
 from pathlib import Path
 
 import flet as ft
@@ -15,9 +15,12 @@ from components.toolbar import build_toolbar
 from constants import DARK_THEME, DAYS, DAY_WIDTH, END_HOUR, HOUR_HEIGHT, LESSON_PALETTE, LIGHT_THEME, START_HOUR
 from features.calendar import render_day_view, render_month_view, render_week_view, render_year_view
 from features.lessons import LessonDialogFeature
+from features.screenshot import ScreenshotFeature
 from features.settings import SettingsFeature
 from models.lesson import Lesson
+from models.fixed_lesson import FixedLesson
 from repositories.lesson_repository import LessonRepository
+from repositories.fixed_lesson_repository import FixedLessonRepository
 from utils.date_utils import month_range, week_start, year_range
 
 
@@ -32,8 +35,10 @@ class TimetableApp:
     def __init__(self, page: ft.Page):
         self.page = page
         self.repo = LessonRepository(str(get_database_path()))
+        self.fixed_repo = FixedLessonRepository(str(get_database_path()))
         self.theme = LIGHT_THEME
         self.settings = SettingsFeature(page, self.set_dark_mode)
+        self.screenshot = ScreenshotFeature(page, get_database_path().parent / "screenshots")
         self.lesson_dialog = LessonDialogFeature(page, self.repo, self.after_lesson_saved)
         self.selected = date.today()
         self.monday = week_start(self.selected)
@@ -41,16 +46,20 @@ class TimetableApp:
         self.view_mode = "week"
         self.drag_selection = None
         self.is_compact = False
+        self.fixed_mode = False
+        self.fixed_selected: set[tuple[int, int]] = set()
+        self.fixed_drag_selection = None
 
         page.title = "Thoi khoa bieu"
         page.theme_mode = ft.ThemeMode.LIGHT
         page.bgcolor = self.theme["page"]
         page.padding = 0
+        page.enable_screenshots = True
         page.on_resized = lambda _: self.on_resize()
 
         self.period_title = ft.Text(size=16, weight=ft.FontWeight.BOLD, color=self.theme["text"])
         self.side_month = ft.Text(size=25, weight=ft.FontWeight.BOLD, color=self.theme["sidebar_text"])
-        self.mini_calendar = ft.GridView(runs_count=7, max_extent=28, spacing=2, run_spacing=2, height=178)
+        self.mini_calendar = ft.Column(spacing=5, height=210)
         self.agenda = ft.ListView(spacing=5, expand=True)
         self.mode_row = ft.Row(spacing=6)
         self.board = ft.Row(spacing=0, vertical_alignment=ft.CrossAxisAlignment.START)
@@ -66,6 +75,8 @@ class TimetableApp:
             on_next=lambda _: self.move_period(1),
             on_search=self.search,
             on_add=lambda _: self.open_editor(),
+            on_fixed=lambda _: self.open_fixed_editor(),
+            screenshot_button=self.screenshot.button(self.theme),
             settings_button=self.settings.button(self.theme),
             theme=self.theme,
             compact=self.is_compact,
@@ -78,7 +89,7 @@ class TimetableApp:
     def apply_responsive_size(self):
         width = self.page.width or 420
         self.is_compact = width < 760
-        self.mini_calendar.height = 0 if self.is_compact else 178
+        self.mini_calendar.height = 0 if self.is_compact else 210
         self.agenda.visible = not self.is_compact
         self.side_month.size = 16 if self.is_compact else 25
         self.period_title.size = 13 if self.is_compact else 16
@@ -86,23 +97,35 @@ class TimetableApp:
     def sidebar_width(self) -> int:
         return 0 if self.is_compact else 255
 
+    def content_width(self) -> int:
+        return max(320, int((self.page.width or 420) - self.sidebar_width()))
+
+    def time_column_width(self) -> int:
+        return 44 if self.is_compact else 52
+
     def day_column_width(self, column_count: int) -> int:
-        width = self.page.width or 420
+        width = self.content_width()
         if column_count == 1:
-            return max(260, int(width - 72 - self.sidebar_width()))
-        return 92 if self.is_compact else DAY_WIDTH
+            return max(260, int(width - self.time_column_width() - 12))
+        if self.is_compact:
+            return max(44, int((width - self.time_column_width() - 2) / column_count))
+        return DAY_WIDTH
 
     def month_cell_width(self) -> int:
-        return 82 if self.is_compact else 122
+        if self.is_compact:
+            return max(44, int((self.content_width() - 2) / 7))
+        return 122
 
     def month_cell_height(self) -> int:
-        return 92 if self.is_compact else 118
+        return 72 if self.is_compact else 118
 
     def year_card_width(self) -> int:
-        return 150 if self.is_compact else 190
+        if self.is_compact:
+            return max(148, int((self.content_width() - 28) / 2))
+        return 190
 
     def year_card_height(self) -> int:
-        return 168 if self.is_compact else 190
+        return 154 if self.is_compact else 190
 
     def year_cards_per_row(self) -> int:
         return 2 if self.is_compact else 4
@@ -131,6 +154,8 @@ class TimetableApp:
             on_next=lambda _: self.move_period(1),
             on_search=self.search,
             on_add=lambda _: self.open_editor(),
+            on_fixed=lambda _: self.open_fixed_editor(),
+            screenshot_button=self.screenshot.button(self.theme),
             settings_button=self.settings.button(self.theme),
             theme=self.theme,
             compact=self.is_compact,
@@ -147,15 +172,23 @@ class TimetableApp:
         self.render_sidebar()
 
         if self.view_mode == "day":
-            render_day_view(self, self.repo.list_for_day(self.selected))
+            lessons = self.repo.list_for_day(self.selected)
+            lessons += self.fixed_lessons_between(self.selected, self.selected)
+            render_day_view(self, lessons)
         elif self.view_mode == "week":
-            render_week_view(self, self.repo.list_between(self.monday, self.monday + timedelta(days=6)))
+            lessons = self.repo.list_between(self.monday, self.monday + timedelta(days=6))
+            lessons += self.fixed_lessons_between(self.monday, self.monday + timedelta(days=6))
+            render_week_view(self, lessons)
         elif self.view_mode == "month":
             start, end = month_range(self.selected)
-            render_month_view(self, self.repo.list_between(start, end))
+            lessons = self.repo.list_between(start, end)
+            lessons += self.fixed_lessons_between(start, end)
+            render_month_view(self, lessons)
         else:
             start, end = year_range(self.selected)
-            render_year_view(self, self.repo.list_between(start, end))
+            lessons = self.repo.list_between(start, end)
+            lessons += self.fixed_lessons_between(start, end)
+            render_year_view(self, lessons)
 
         self.page.update()
 
@@ -187,16 +220,43 @@ class TimetableApp:
             self.agenda.controls.append(build_agenda_item(lesson, lambda _, item=lesson: self.open_editor(item), self.theme))
 
         self.mini_calendar.controls.clear()
-        for label in DAYS:
-            self.mini_calendar.controls.append(ft.Text(label, size=9, color=self.theme["sidebar_subtle"], text_align=ft.TextAlign.CENTER))
+        self.mini_calendar.controls.append(
+            ft.Row(
+                [
+                    ft.Container(
+                        ft.Text(label, size=9, color=self.theme["sidebar_subtle"], text_align=ft.TextAlign.CENTER),
+                        width=25,
+                    )
+                    for label in DAYS
+                ],
+                spacing=5,
+                alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+            )
+        )
         first_weekday, days_in_month = calendar.monthrange(self.selected.year, self.selected.month)
-        for _ in range(first_weekday):
-            self.mini_calendar.controls.append(ft.Container())
-        for number in range(1, days_in_month + 1):
-            value = date(self.selected.year, self.selected.month, number)
-            active = value == self.selected
+        cells = [None] * first_weekday + list(range(1, days_in_month + 1))
+        cells += [None] * ((7 - len(cells) % 7) % 7)
+        for start in range(0, len(cells), 7):
+            week_cells = []
+            for number in cells[start:start + 7]:
+                if number is None:
+                    week_cells.append(ft.Container(width=25, height=25))
+                    continue
+                value = date(self.selected.year, self.selected.month, number)
+                week_cells.append(
+                    build_mini_calendar_day(
+                        number,
+                        value == self.selected,
+                        lambda _, selected_day=value: self.select_day(selected_day),
+                        self.theme,
+                    )
+                )
             self.mini_calendar.controls.append(
-                build_mini_calendar_day(number, active, lambda _, selected_day=value: self.select_day(selected_day), self.theme)
+                ft.Row(
+                    week_cells,
+                    spacing=5,
+                    alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+                )
             )
 
     def build_day_board(self, lessons: list[Lesson]):
@@ -206,17 +266,327 @@ class TimetableApp:
         days = [(self.monday + timedelta(days=offset), DAYS[offset]) for offset in range(7)]
         self.build_calendar_board(days, lessons)
 
-    def build_calendar_board(self, days: list[tuple[date, str]], lessons: list[Lesson]):
-        if self.query:
-            lessons = [lesson for lesson in lessons if self.query in lesson.title.casefold()]
+    def fixed_lessons_for_week(self) -> list[Lesson]:
+        return self.fixed_lessons_between(self.monday, self.monday + timedelta(days=6))
 
+    def fixed_lessons_between(self, start: date, end: date) -> list[Lesson]:
+        result = []
+        fixed_items = self.fixed_repo.list_all()
+        cursor = start
+        while cursor <= end:
+            for fixed in fixed_items:
+                if fixed.weekday != cursor.weekday():
+                    continue
+                if fixed.effective_from and cursor < fixed.effective_from:
+                    continue
+                start_at = datetime.combine(cursor, fixed.start_time)
+                end_day = cursor + timedelta(days=1) if fixed.end_time <= fixed.start_time else cursor
+                result.append(
+                    Lesson(
+                        id=-fixed.id if fixed.id else None,
+                        title=fixed.title,
+                        start_at=start_at,
+                        end_at=datetime.combine(end_day, fixed.end_time),
+                        address=fixed.address,
+                        room=fixed.room,
+                        note=fixed.note,
+                        color=fixed.color,
+                    )
+                )
+            cursor += timedelta(days=1)
+        return result
+
+    def open_fixed_editor(self):
+        self.fixed_mode = True
+        self.fixed_selected = set()
+        self.fixed_drag_selection = None
+        self.calendar_panel.controls = [self.build_fixed_editor()]
+        self.page.update()
+
+    def close_fixed_editor(self):
+        self.fixed_mode = False
+        self.calendar_panel.controls = [self.toolbar, self.board_scroll]
+        self.refresh()
+
+    def build_fixed_editor(self):
+        title = ft.Text("Lich co dinh", size=20, weight=ft.FontWeight.BOLD, color=self.theme["text"])
+        hint = ft.Text("Chon o trong de tao lich. Bam vao card de sua hoac xoa.", color=self.theme["text_muted"])
         total_height = (END_HOUR - START_HOUR) * HOUR_HEIGHT
+        column_width = self.day_column_width(7)
+        time_width = self.time_column_width()
+        fixed_by_day: dict[int, list[FixedLesson]] = {}
+        for item in self.fixed_repo.list_all():
+            fixed_by_day.setdefault(item.weekday, []).append(item)
+
         time_cells = [ft.Container(height=58)]
         for hour in range(START_HOUR, END_HOUR):
             time_cells.append(
                 ft.Container(
                     ft.Text(f"{hour:02}:00", size=10, color=self.theme["text_subtle"]),
-                    width=52,
+                    width=time_width,
+                    height=HOUR_HEIGHT,
+                    padding=ft.Padding.only(right=7, top=3),
+                    alignment=ft.Alignment.TOP_RIGHT,
+                    bgcolor=self.theme["surface_low"],
+                    border=ft.Border(bottom=ft.BorderSide(1, self.theme["border"])),
+                )
+            )
+
+        columns = [ft.Column(time_cells, spacing=0)]
+        for weekday, label in enumerate(DAYS):
+            stack_controls = []
+            for slot in range(END_HOUR - START_HOUR):
+                key = (weekday, slot)
+                selected = key in self.fixed_selected
+                stack_controls.append(
+                    ft.Container(
+                        top=slot * HOUR_HEIGHT,
+                        left=0,
+                        width=column_width,
+                        height=HOUR_HEIGHT,
+                        bgcolor=f"{self.theme['accent']}22" if selected else self.theme["surface"],
+                        border=ft.Border(
+                            bottom=ft.BorderSide(1, self.theme["border"]),
+                            right=ft.BorderSide(1, self.theme["border"]),
+                        ),
+                    )
+                )
+            stack_controls.append(self.fixed_gesture_layer(weekday, column_width, total_height))
+            for fixed in fixed_by_day.get(weekday, []):
+                stack_controls.append(self.fixed_lesson_card(fixed, column_width, total_height))
+
+            header = ft.Container(
+                ft.Column(
+                    [
+                        ft.Text(label, size=10, color=self.theme["text_subtle"]),
+                        ft.Icon(ft.Icons.PUSH_PIN_OUTLINED, size=17, color=self.theme["text"]),
+                    ],
+                    spacing=1,
+                    horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+                ),
+                width=column_width,
+                height=58,
+                padding=7,
+                bgcolor=self.theme["surface_high"],
+                border=ft.Border(bottom=ft.BorderSide(1, self.theme["border"]), right=ft.BorderSide(1, self.theme["border"])),
+            )
+            columns.append(ft.Column([header, ft.Stack(stack_controls, width=column_width, height=total_height)], spacing=0))
+
+        board = ft.ListView([ft.Row(columns, spacing=0, scroll=ft.ScrollMode.AUTO)], expand=True, padding=0)
+        return ft.Column(
+            [
+                ft.Row([
+                    ft.IconButton(ft.Icons.ARROW_BACK, on_click=lambda _: self.close_fixed_editor()),
+                    title,
+                    ft.Container(expand=True),
+                    ft.Button("Done", icon=ft.Icons.CHECK, bgcolor=self.theme["accent"], color="#FFFFFF", on_click=lambda _: self.save_fixed_selection()),
+                ]),
+                hint,
+                board,
+            ],
+            expand=True,
+            spacing=8,
+        )
+
+    def fixed_lesson_card(self, fixed: FixedLesson, column_width: int, total_height: int):
+        day = date.today()
+        start_at = datetime.combine(day, fixed.start_time)
+        end_day = day + timedelta(days=1) if fixed.end_time <= fixed.start_time else day
+        lesson = Lesson(
+            id=fixed.id,
+            title=fixed.title,
+            start_at=start_at,
+            end_at=datetime.combine(end_day, fixed.end_time),
+            address=fixed.address,
+            room=fixed.room,
+            note=fixed.note,
+            color=fixed.color,
+        )
+        card = self.grid_lesson_card(lesson, column_width, total_height)
+        card.on_click = lambda _, item=fixed: self.open_fixed_dialog(item)
+        return card
+
+    def fixed_gesture_layer(self, weekday: int, column_width: int, total_height: int):
+        return ft.GestureDetector(
+            content=ft.Container(width=column_width, height=total_height, bgcolor="#00000000"),
+            top=0,
+            left=0,
+            on_double_tap_down=lambda event, day=weekday: self.double_tap_fixed_cell(day, self.event_y(event)),
+            on_long_press_start=lambda event, day=weekday: self.start_fixed_drag(day, self.event_y(event)),
+            on_long_press_move_update=lambda event, day=weekday: self.update_fixed_drag(day, self.event_y(event)),
+            on_long_press_end=lambda event, day=weekday: self.finish_fixed_drag(day, self.event_y(event)),
+        )
+
+    def select_fixed_range(self, weekday: int, start_slot: int, end_slot: int):
+        first = min(start_slot, end_slot)
+        last = max(start_slot, end_slot)
+        self.fixed_selected = {(weekday, slot) for slot in range(first, last + 1)}
+        self.calendar_panel.controls = [self.build_fixed_editor()]
+        self.page.update()
+
+    def double_tap_fixed_cell(self, weekday: int, y: float):
+        slot = self.slot_from_y(y)
+        self.select_fixed_range(weekday, slot, slot)
+        self.save_fixed_selection()
+
+    def start_fixed_drag(self, weekday: int, y: float):
+        slot = self.slot_from_y(y)
+        self.fixed_drag_selection = {"weekday": weekday, "start_slot": slot, "end_slot": slot}
+
+    def update_fixed_drag(self, weekday: int, y: float):
+        if not self.fixed_drag_selection or self.fixed_drag_selection["weekday"] != weekday:
+            return
+        slot = self.slot_from_y(y)
+        self.fixed_drag_selection["end_slot"] = slot
+
+    def finish_fixed_drag(self, weekday: int, y: float):
+        if not self.fixed_drag_selection or self.fixed_drag_selection["weekday"] != weekday:
+            self.fixed_drag_selection = None
+            self.refresh_fixed_surface()
+            return
+        slot = self.slot_from_y(y)
+        start_slot = self.fixed_drag_selection["start_slot"]
+        self.fixed_drag_selection = None
+        self.select_fixed_range(weekday, start_slot, slot)
+        self.save_fixed_selection()
+
+    def save_fixed_selection(self):
+        if not self.fixed_selected:
+            self.close_fixed_editor()
+            return
+        slots = sorted(self.fixed_selected)
+        weekdays = {weekday for weekday, _ in slots}
+        first_slot = min(slot for _, slot in slots)
+        last_slot = max(slot for _, slot in slots)
+        default_start = time(START_HOUR + first_slot, 0)
+        end_hour = START_HOUR + last_slot + 1
+        default_end = time(end_hour, 0) if end_hour < 24 else time(23, 59)
+        default_effective = date(self.selected.year, self.selected.month, 1)
+
+        title = ft.TextField(label="Ten lich co dinh", autofocus=True)
+        start = ft.TextField(label="Bat dau", value=default_start.strftime("%H:%M"), expand=True)
+        finish = ft.TextField(label="Ket thuc", value=default_end.strftime("%H:%M"), expand=True)
+        effective_from = ft.TextField(label="Ap dung tu ngay", value=default_effective.strftime("%Y-%m-%d"))
+        room = ft.TextField(label="Phong hoc", value="")
+        note = ft.TextField(label="Ghi chu", value="", multiline=True, min_lines=2)
+        error = ft.Text(color=self.theme["danger"])
+
+        def parse_clock(value: str) -> time:
+            return datetime.strptime(value.strip(), "%H:%M").time()
+
+        def save(_):
+            try:
+                start_time = parse_clock(start.value)
+                end_time = parse_clock(finish.value)
+                starts_on = datetime.strptime(effective_from.value.strip(), "%Y-%m-%d").date()
+            except ValueError:
+                error.value = "Gio phai la HH:MM, ngay phai la YYYY-MM-DD"
+                self.page.update()
+                return
+            if not title.value.strip():
+                error.value = "Ban chua nhap ten lich"
+                self.page.update()
+                return
+            for weekday in sorted(weekdays):
+                self.fixed_repo.save(FixedLesson(
+                    weekday=weekday,
+                    start_time=start_time,
+                    end_time=end_time,
+                    title=title.value.strip(),
+                    room=room.value.strip(),
+                    note=note.value.strip(),
+                    effective_from=starts_on,
+                ))
+            self.page.pop_dialog()
+            self.fixed_selected = set()
+            self.refresh_fixed_surface()
+
+        self.page.show_dialog(ft.AlertDialog(
+            modal=True,
+            title=ft.Text("Luu lich co dinh"),
+            content=ft.Column([title, ft.Row([start, finish]), effective_from, room, note, error], tight=True),
+            actions=[ft.TextButton("Huy", on_click=lambda _: self.page.pop_dialog()), ft.Button("Luu", on_click=save)],
+        ))
+
+    def open_fixed_dialog(self, fixed: FixedLesson):
+        title = ft.TextField(label="Ten lich co dinh", value=fixed.title, autofocus=True)
+        start = ft.TextField(label="Bat dau", value=fixed.start_time.strftime("%H:%M"), expand=True)
+        finish = ft.TextField(label="Ket thuc", value=fixed.end_time.strftime("%H:%M"), expand=True)
+        effective_from = ft.TextField(
+            label="Ap dung tu ngay",
+            value=(fixed.effective_from or date.today().replace(day=1)).strftime("%Y-%m-%d"),
+        )
+        room = ft.TextField(label="Phong hoc", value=fixed.room)
+        note = ft.TextField(label="Ghi chu", value=fixed.note, multiline=True, min_lines=2)
+        error = ft.Text(color=self.theme["danger"])
+
+        def parse_clock(value: str) -> time:
+            return datetime.strptime(value.strip(), "%H:%M").time()
+
+        def save(_):
+            try:
+                start_time = parse_clock(start.value)
+                end_time = parse_clock(finish.value)
+                starts_on = datetime.strptime(effective_from.value.strip(), "%Y-%m-%d").date()
+            except ValueError:
+                error.value = "Gio phai la HH:MM, ngay phai la YYYY-MM-DD"
+                self.page.update()
+                return
+            if not title.value.strip():
+                error.value = "Ban chua nhap ten lich"
+                self.page.update()
+                return
+            self.fixed_repo.save(FixedLesson(
+                id=fixed.id,
+                weekday=fixed.weekday,
+                start_time=start_time,
+                end_time=end_time,
+                title=title.value.strip(),
+                room=room.value.strip(),
+                note=note.value.strip(),
+                color=fixed.color,
+                address=fixed.address,
+                effective_from=starts_on,
+            ))
+            self.page.pop_dialog()
+            self.refresh_fixed_surface()
+
+        def delete(_):
+            if fixed.id is not None:
+                self.fixed_repo.delete(fixed.id)
+            self.page.pop_dialog()
+            self.refresh_fixed_surface()
+
+        self.page.show_dialog(ft.AlertDialog(
+            modal=True,
+            title=ft.Text(f"Lich co dinh - {DAYS[fixed.weekday]}"),
+            content=ft.Column([title, ft.Row([start, finish]), effective_from, room, note, error], tight=True),
+            actions=[
+                ft.TextButton("Xoa", icon=ft.Icons.DELETE_OUTLINE, on_click=delete),
+                ft.TextButton("Huy", on_click=lambda _: self.page.pop_dialog()),
+                ft.Button("Luu", on_click=save),
+            ],
+        ))
+
+    def refresh_fixed_surface(self):
+        if self.fixed_mode:
+            self.calendar_panel.controls = [self.build_fixed_editor()]
+            self.page.update()
+            return
+        self.refresh()
+
+    def build_calendar_board(self, days: list[tuple[date, str]], lessons: list[Lesson]):
+        if self.query:
+            lessons = [lesson for lesson in lessons if self.query in lesson.title.casefold()]
+
+        total_height = (END_HOUR - START_HOUR) * HOUR_HEIGHT
+        time_width = self.time_column_width()
+        time_cells = [ft.Container(height=58)]
+        for hour in range(START_HOUR, END_HOUR):
+            time_cells.append(
+                ft.Container(
+                    ft.Text(f"{hour:02}:00", size=10, color=self.theme["text_subtle"]),
+                    width=time_width,
                     height=HOUR_HEIGHT,
                     padding=ft.Padding.only(right=7, top=3),
                     alignment=ft.Alignment.TOP_RIGHT,
@@ -306,19 +676,20 @@ class TimetableApp:
         if top >= total_height:
             return ft.Container()
         card_bg, title_color, meta_color = self.lesson_colors(lesson.color)
+        compact_card = column_width < 70
         return ft.Container(
             ft.Column(
                 [
-                    ft.Text(lesson.start_at.strftime("%H:%M"), size=9, color=meta_color, weight=ft.FontWeight.BOLD),
+                    ft.Text(lesson.start_at.strftime("%H:%M"), size=8 if compact_card else 9, color=meta_color, weight=ft.FontWeight.BOLD),
                     ft.Text(
                         lesson.title,
-                        size=10,
+                        size=8 if compact_card else 10,
                         weight=ft.FontWeight.BOLD,
                         color=title_color,
-                        max_lines=2,
+                        max_lines=1 if compact_card else 2,
                         overflow=ft.TextOverflow.ELLIPSIS,
                     ),
-                    ft.Text(lesson.room, size=9, color=title_color, opacity=0.75, visible=bool(lesson.room)),
+                    ft.Text(lesson.room, size=8 if compact_card else 9, color=title_color, opacity=0.75, visible=bool(lesson.room) and not compact_card),
                 ],
                 spacing=1,
             ),
@@ -327,11 +698,20 @@ class TimetableApp:
             width=column_width - 6,
             height=min(height - 4, total_height - top - 2),
             bgcolor=card_bg,
-            padding=5,
+            padding=3 if compact_card else 5,
             border_radius=5,
-            border=ft.Border(left=ft.BorderSide(3, lesson.color)),
-            on_click=lambda _, item=lesson: self.open_editor(item),
+            border=ft.Border(left=ft.BorderSide(2 if compact_card else 3, lesson.color)),
+            on_click=lambda _, item=lesson: self.open_lesson_item(item),
         )
+
+    def open_lesson_item(self, lesson: Lesson):
+        if lesson.id is None or lesson.id > 0:
+            self.open_editor(lesson)
+            return
+        fixed_id = -lesson.id
+        fixed = next((item for item in self.fixed_repo.list_all() if item.id == fixed_id), None)
+        if fixed:
+            self.open_fixed_dialog(fixed)
 
     def lesson_colors(self, color: str):
         palette = LESSON_PALETTE.get(color, LESSON_PALETTE["#20A4E8"])
@@ -384,13 +764,13 @@ class TimetableApp:
                 ft.Container(
                     content=ft.Text(
                         lesson.title,
-                        size=9,
+                        size=8 if self.is_compact else 9,
                         color=title_color,
                         max_lines=1,
                         overflow=ft.TextOverflow.ELLIPSIS,
                     ),
 
-                    width=max(62, self.month_cell_width() - 14) if active_month else None,
+                    width=max(32, self.month_cell_width() - 10) if active_month else None,
 
                     bgcolor=card_bg,
 
@@ -402,8 +782,8 @@ class TimetableApp:
                     ),
 
                     padding=ft.Padding.symmetric(
-                        horizontal=5,
-                        vertical=3,
+                        horizontal=3 if self.is_compact else 5,
+                        vertical=2 if self.is_compact else 3,
                     ),
 
                     border_radius=4,
@@ -445,7 +825,7 @@ class TimetableApp:
 
             width=self.month_cell_width(),
             height=self.month_cell_height(),
-            padding=7,
+            padding=4 if self.is_compact else 7,
 
             bgcolor=(
                 self.theme["surface"]
