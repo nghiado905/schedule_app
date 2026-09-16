@@ -8,6 +8,7 @@ def build_toolbar(
     on_next,
     on_search,
     on_add,
+    on_fixed,
     screenshot_button,
     settings_button,
     theme,
@@ -33,12 +34,19 @@ def build_toolbar(
                     bgcolor=theme["surface"],
                     on_change=on_search,
                 ),
-               ft.Button(
+                ft.Button(
                     "Them" if compact else "Them chi tiet",
                     icon=ft.Icons.ADD,
                     bgcolor=theme["accent"],
                     color="#FFFFFF",
                     on_click=on_add,
+                ),
+                ft.Button(
+                    "Lich co dinh",
+                    icon=ft.Icons.PUSH_PIN_OUTLINED,
+                    bgcolor=theme["surface_high"],
+                    color=theme["text"],
+                    on_click=on_fixed,
                 ),
                 screenshot_button,
                 settings_button,
